@@ -42,7 +42,18 @@ func cloneAcceptance(value *domain.SurveyAcceptance) (*domain.SurveyAcceptance, 
 	result.AreaBoundary.Points = append([]domain.Point(nil), value.AreaBoundary.Points...)
 	result.PlannedLineIDs = append([]string(nil), value.PlannedLineIDs...)
 	result.Revisions = append([]domain.SonarLineRevision(nil), value.Revisions...)
+	for index := range result.Revisions {
+		result.Revisions[index].CoverageSamples = append([]domain.CoverageSample(nil), value.Revisions[index].CoverageSamples...)
+	}
 	result.Assessments = append([]domain.QualityAssessment(nil), value.Assessments...)
+	for index := range result.Assessments {
+		result.Assessments[index].RuleOutcomes = append([]domain.RuleOutcome(nil), value.Assessments[index].RuleOutcomes...)
+		revisionRefs := make(map[string]string, len(value.Assessments[index].RevisionRefs))
+		for key, ref := range value.Assessments[index].RevisionRefs {
+			revisionRefs[key] = ref
+		}
+		result.Assessments[index].RevisionRefs = revisionRefs
+	}
 	result.Findings = append([]domain.QualityFinding(nil), value.Findings...)
 	for index := range result.Findings {
 		if value.Findings[index].ReviewedAt != nil {
