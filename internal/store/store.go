@@ -23,7 +23,6 @@ type Store struct {
 	snapshotPath string
 	aggregates   map[string]*domain.SurveyAcceptance
 	idempotency  map[string]json.RawMessage
-	auditCursors map[string]int64
 	sequence     int64
 	lastHash     string
 }
@@ -38,7 +37,7 @@ func Open(directory string) (*Store, error) {
 	store := &Store{
 		directory: directory, eventPath: filepath.Join(directory, "events.jsonl"),
 		snapshotPath: filepath.Join(directory, "snapshot.json"), aggregates: make(map[string]*domain.SurveyAcceptance),
-		idempotency: make(map[string]json.RawMessage), auditCursors: make(map[string]int64),
+		idempotency: make(map[string]json.RawMessage),
 	}
 	if err := store.recover(); err != nil {
 		return nil, err
@@ -126,11 +125,6 @@ func (s *Store) Audit(_ context.Context, acceptanceID string, cursor int64, limi
 	if _, exists := s.aggregates[acceptanceID]; !exists {
 		return nil, 0, domain.ErrNotFound
 	}
-	cursorKey := acceptanceID + "\x00" + operation
-	effectiveCursor := cursor
-	if previous, exists := s.auditCursors[cursorKey]; exists && cursor == 0 {
-		effectiveCursor = previous
-	}
 	events, err := readEvents(s.eventPath)
 	if err != nil {
 		return nil, 0, domain.NewError("AUDIT_CHAIN_INVALID", err.Error())
@@ -146,7 +140,7 @@ func (s *Store) Audit(_ context.Context, acceptanceID string, cursor int64, limi
 			expectedVersion++
 		}
 		matchesOperation := operation == "" || event.Operation == operation || strings.HasPrefix(event.Operation, operation+":")
-		if event.AcceptanceID != acceptanceID || event.Sequence <= effectiveCursor || !matchesOperation {
+		if event.AcceptanceID != acceptanceID || event.Sequence <= cursor || !matchesOperation {
 			continue
 		}
 		view := domain.AuditEvent{Sequence: event.Sequence, Operation: event.Operation, Actor: event.Actor, OccurredAt: event.OccurredAt, AggregateVersion: event.AggregateVersion, PreviousHash: event.PreviousHash, Hash: event.Hash}
@@ -169,9 +163,6 @@ func (s *Store) Audit(_ context.Context, acceptanceID string, cursor int64, limi
 			break
 		}
 		result = append(result, view)
-	}
-	if len(result) > 0 {
-		s.auditCursors[cursorKey] = result[len(result)-1].Sequence
 	}
 	return result, next, nil
 }
