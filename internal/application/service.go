@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"sonarqa/internal/domain"
 )
@@ -13,6 +14,7 @@ type Service struct {
 	repository  Repository
 	clock       Clock
 	ids         IDGenerator
+	cacheMu     sync.RWMutex
 	replayCache map[string]json.RawMessage
 }
 
@@ -42,8 +44,11 @@ func (s *Service) replay(ctx context.Context, operation, key string, target any)
 		return false, err
 	}
 	cacheKey := operation + "\x00" + key
-	if raw, exists := s.replayCache[cacheKey]; exists {
-		if err := json.Unmarshal(raw, target); err != nil {
+	s.cacheMu.RLock()
+	cached, exists := s.replayCache[cacheKey]
+	s.cacheMu.RUnlock()
+	if exists {
+		if err := json.Unmarshal(cached, target); err != nil {
 			return false, fmt.Errorf("解析缓存幂等结果: %w", err)
 		}
 		if result, ok := target.(*MutationResult); ok {
@@ -55,7 +60,9 @@ func (s *Service) replay(ctx context.Context, operation, key string, target any)
 	if err != nil || !exists {
 		return false, err
 	}
+	s.cacheMu.Lock()
 	s.replayCache[cacheKey] = append(json.RawMessage(nil), raw...)
+	s.cacheMu.Unlock()
 	if err := json.Unmarshal(raw, target); err != nil {
 		return false, fmt.Errorf("解析幂等结果: %w", err)
 	}
