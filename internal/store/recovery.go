@@ -80,6 +80,14 @@ func readSnapshot(path string) (*snapshotFile, error) {
 	if snapshot.Aggregates == nil {
 		return nil, fmt.Errorf("投影快照缺少 aggregates")
 	}
+	for id, aggregate := range snapshot.Aggregates {
+		if aggregate == nil || aggregate.ID != id {
+			return nil, fmt.Errorf("投影快照任务键与 ID 不一致: %s", id)
+		}
+		if err := aggregate.ValidateIntegrity(); err != nil {
+			return nil, fmt.Errorf("投影快照任务投影 %s 无效: %w", id, err)
+		}
+	}
 	return &snapshot, nil
 }
 
