@@ -92,7 +92,30 @@ func (s *Service) commitMutation(ctx context.Context, aggregate *domain.SurveyAc
 		}
 		result.Replayed = true
 	}
+	s.refreshStableView(aggregate)
 	return result, nil
+}
+
+// refreshStableView keeps the Frozen detail cache in sync with persisted state
+// after a mutation commits. For Frozen tasks the cached projection is refreshed
+// with the committed version; for Released tasks the committed view is kept so a
+// concurrent Get that loaded the prior Frozen aggregate cannot overwrite the
+// newer Released view (the version guard in Get compares against this entry).
+// Other statuses are not cached here; Get only caches Frozen projections, so
+// removing the entry lets subsequent reads load fresh state from the repository.
+func (s *Service) refreshStableView(aggregate *domain.SurveyAcceptance) {
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	switch aggregate.Status {
+	case domain.StatusFrozen, domain.StatusReleased:
+		fresh := BuildView(aggregate)
+		if cached, exists := s.stableViews[aggregate.ID]; exists && cached.Version > fresh.Version {
+			return
+		}
+		s.stableViews[aggregate.ID] = fresh
+	default:
+		delete(s.stableViews, aggregate.ID)
+	}
 }
 
 func (s *Service) Get(ctx context.Context, id string) (AcceptanceView, error) {
@@ -109,7 +132,11 @@ func (s *Service) Get(ctx context.Context, id string) (AcceptanceView, error) {
 	view := BuildView(acceptance)
 	if view.Status == domain.StatusFrozen {
 		s.viewMu.Lock()
-		s.stableViews[id] = view
+		// Avoid writing back a stale Frozen projection when a concurrent
+		// mutation already committed a newer version for this acceptance.
+		if existing, ok := s.stableViews[id]; !ok || existing.Version <= view.Version {
+			s.stableViews[id] = view
+		}
 		s.viewMu.Unlock()
 	}
 	return view, nil
