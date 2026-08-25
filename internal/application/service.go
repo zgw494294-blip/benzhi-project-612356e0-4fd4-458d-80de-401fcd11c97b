@@ -5,18 +5,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"sonarqa/internal/domain"
 )
 
 type Service struct {
-	repository Repository
-	clock      Clock
-	ids        IDGenerator
+	repository        Repository
+	clock             Clock
+	ids               IDGenerator
+	evaluationMu      sync.Mutex
+	evaluationContext context.Context
+	evaluationCancel  context.CancelFunc
 }
 
 func NewService(repository Repository, clock Clock, ids IDGenerator) *Service {
 	return &Service{repository: repository, clock: clock, ids: ids}
+}
+
+func (s *Service) beginEvaluation(ctx context.Context) (context.Context, func()) {
+	s.evaluationMu.Lock()
+	if s.evaluationCancel != nil {
+		s.evaluationCancel()
+	}
+	evaluationContext, cancel := context.WithCancel(ctx)
+	s.evaluationContext = evaluationContext
+	s.evaluationCancel = cancel
+	s.evaluationMu.Unlock()
+
+	return evaluationContext, func() {
+		s.evaluationMu.Lock()
+		defer s.evaluationMu.Unlock()
+		if s.evaluationContext == evaluationContext {
+			cancel()
+			s.evaluationContext = nil
+			s.evaluationCancel = nil
+		}
+	}
 }
 
 func validateIdempotency(key string) error {

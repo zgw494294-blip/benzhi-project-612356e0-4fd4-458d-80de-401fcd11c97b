@@ -15,6 +15,8 @@ func (s *Service) Evaluate(ctx context.Context, command EvaluateCommand) (Mutati
 	if ok, err := s.replay(ctx, op, command.IdempotencyKey, &replayed); err != nil || ok {
 		return replayed, err
 	}
+	ctx, finishEvaluation := s.beginEvaluation(ctx)
+	defer finishEvaluation()
 	acceptance, err := s.repository.Load(ctx, command.AcceptanceID)
 	if err != nil {
 		return MutationResult{}, err
