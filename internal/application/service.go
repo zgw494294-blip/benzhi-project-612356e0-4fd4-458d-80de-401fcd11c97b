@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"sonarqa/internal/domain"
 )
@@ -13,10 +14,38 @@ type Service struct {
 	repository Repository
 	clock      Clock
 	ids        IDGenerator
+	listMu     sync.RWMutex
+	listCache  map[string]json.RawMessage
 }
 
 func NewService(repository Repository, clock Clock, ids IDGenerator) *Service {
-	return &Service{repository: repository, clock: clock, ids: ids}
+	return &Service{repository: repository, clock: clock, ids: ids, listCache: make(map[string]json.RawMessage)}
+}
+
+func (s *Service) cachedList(status string) (ListResult, bool, error) {
+	s.listMu.RLock()
+	raw, exists := s.listCache[status]
+	raw = append(json.RawMessage(nil), raw...)
+	s.listMu.RUnlock()
+	if !exists {
+		return ListResult{}, false, nil
+	}
+	var result ListResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return ListResult{}, false, fmt.Errorf("解析列表缓存: %w", err)
+	}
+	return result, true, nil
+}
+
+func (s *Service) cacheList(status string, result ListResult) error {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("编码列表缓存: %w", err)
+	}
+	s.listMu.Lock()
+	s.listCache[status] = append(json.RawMessage(nil), raw...)
+	s.listMu.Unlock()
+	return nil
 }
 
 func validateIdempotency(key string) error {

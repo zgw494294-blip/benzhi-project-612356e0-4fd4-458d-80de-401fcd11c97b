@@ -22,6 +22,9 @@ func (s *Service) ListQuery(ctx context.Context, query ListQuery) (ListResult, e
 	if query.CreatedFrom != nil && query.CreatedTo != nil && query.CreatedFrom.After(*query.CreatedTo) {
 		return ListResult{}, domain.FieldError("createdFrom", "创建时间范围无效")
 	}
+	if cached, exists, err := s.cachedList(query.Status); err != nil || exists {
+		return cached, err
+	}
 	values, err := s.repository.List(ctx)
 	if err != nil {
 		return ListResult{}, err
@@ -79,7 +82,11 @@ func (s *Service) ListQuery(ctx context.Context, query ListQuery) (ListResult, e
 		}
 		items = append(items, ListItem{AcceptanceView: v, LatestAssessmentBlocking: blocking, OpenFindings: open, Released: a.Status == domain.StatusReleased})
 	}
-	return ListResult{Items: items, Total: total, HasNext: end < total, StatusCounts: counts}, nil
+	result := ListResult{Items: items, Total: total, HasNext: end < total, StatusCounts: counts}
+	if err := s.cacheList(query.Status, result); err != nil {
+		return ListResult{}, err
+	}
+	return result, nil
 }
 func validStatusForList(status domain.Status) bool {
 	switch status {
