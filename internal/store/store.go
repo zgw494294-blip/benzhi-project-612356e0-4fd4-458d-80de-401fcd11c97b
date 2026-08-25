@@ -169,6 +169,18 @@ func (s *Store) Audit(_ context.Context, acceptanceID string, cursor int64, limi
 
 func operationName(name, id string) string { return name + ":" + id }
 
+func contextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 func (s *Store) FindIdempotent(_ context.Context, operation, key string) (json.RawMessage, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -176,7 +188,7 @@ func (s *Store) FindIdempotent(_ context.Context, operation, key string) (json.R
 	return append(json.RawMessage(nil), value...), exists, nil
 }
 
-func (s *Store) Commit(_ context.Context, request application.CommitRequest) (application.CommitResult, error) {
+func (s *Store) Commit(ctx context.Context, request application.CommitRequest) (application.CommitResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	mapKey := idemMapKey(request.Operation, request.IdempotencyKey)
@@ -243,6 +255,9 @@ func (s *Store) Commit(_ context.Context, request application.CommitRequest) (ap
 		return application.CommitResult{}, err
 	}
 	if err := s.writeSnapshot(request.OccurredAt); err != nil {
+		return application.CommitResult{}, err
+	}
+	if err := contextErr(ctx); err != nil {
 		return application.CommitResult{}, err
 	}
 	return application.CommitResult{Result: append(json.RawMessage(nil), request.Result...)}, nil
