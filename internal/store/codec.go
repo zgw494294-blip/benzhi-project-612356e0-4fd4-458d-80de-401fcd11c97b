@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 
 	"sonarqa/internal/domain"
 )
@@ -36,13 +35,30 @@ func calculateSnapshotHash(snapshot snapshotFile) (string, error) {
 }
 
 func cloneAcceptance(value *domain.SurveyAcceptance) (*domain.SurveyAcceptance, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("编码任务投影: %w", err)
+	if value == nil {
+		return &domain.SurveyAcceptance{}, nil
 	}
-	var result domain.SurveyAcceptance
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, fmt.Errorf("复制任务投影: %w", err)
+	result := *value
+	result.AreaBoundary.Points = append([]domain.Point(nil), value.AreaBoundary.Points...)
+	result.PlannedLineIDs = append([]string(nil), value.PlannedLineIDs...)
+	result.Revisions = append([]domain.SonarLineRevision(nil), value.Revisions...)
+	result.Assessments = append([]domain.QualityAssessment(nil), value.Assessments...)
+	result.Findings = append([]domain.QualityFinding(nil), value.Findings...)
+	for index := range result.Findings {
+		if value.Findings[index].ReviewedAt != nil {
+			reviewedAt := *value.Findings[index].ReviewedAt
+			result.Findings[index].ReviewedAt = &reviewedAt
+		}
+	}
+	if value.Manifest != nil {
+		manifest := *value.Manifest
+		manifest.Lines = append([]domain.FrozenLine(nil), value.Manifest.Lines...)
+		manifest.ApprovedFindings = append([]string(nil), value.Manifest.ApprovedFindings...)
+		result.Manifest = &manifest
+	}
+	if value.Release != nil {
+		release := *value.Release
+		result.Release = &release
 	}
 	return &result, nil
 }
