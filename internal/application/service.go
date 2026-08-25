@@ -10,13 +10,19 @@ import (
 )
 
 type Service struct {
-	repository Repository
-	clock      Clock
-	ids        IDGenerator
+	repository  Repository
+	clock       Clock
+	ids         IDGenerator
+	replayCache map[string]json.RawMessage
 }
 
 func NewService(repository Repository, clock Clock, ids IDGenerator) *Service {
-	return &Service{repository: repository, clock: clock, ids: ids}
+	return &Service{
+		repository:  repository,
+		clock:       clock,
+		ids:         ids,
+		replayCache: make(map[string]json.RawMessage),
+	}
 }
 
 func validateIdempotency(key string) error {
@@ -35,10 +41,21 @@ func (s *Service) replay(ctx context.Context, operation, key string, target any)
 	if err := validateIdempotency(key); err != nil {
 		return false, err
 	}
+	cacheKey := operation + "\x00" + key
+	if raw, exists := s.replayCache[cacheKey]; exists {
+		if err := json.Unmarshal(raw, target); err != nil {
+			return false, fmt.Errorf("解析缓存幂等结果: %w", err)
+		}
+		if result, ok := target.(*MutationResult); ok {
+			result.Replayed = true
+		}
+		return true, nil
+	}
 	raw, exists, err := s.repository.FindIdempotent(ctx, operation, key)
 	if err != nil || !exists {
 		return false, err
 	}
+	s.replayCache[cacheKey] = append(json.RawMessage(nil), raw...)
 	if err := json.Unmarshal(raw, target); err != nil {
 		return false, fmt.Errorf("解析幂等结果: %w", err)
 	}
