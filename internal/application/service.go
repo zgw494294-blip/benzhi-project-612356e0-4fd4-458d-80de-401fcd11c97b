@@ -5,18 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"sonarqa/internal/domain"
 )
 
 type Service struct {
-	repository Repository
-	clock      Clock
-	ids        IDGenerator
+	repository  Repository
+	clock       Clock
+	ids         IDGenerator
+	viewMu      sync.RWMutex
+	stableViews map[string]AcceptanceView
 }
 
 func NewService(repository Repository, clock Clock, ids IDGenerator) *Service {
-	return &Service{repository: repository, clock: clock, ids: ids}
+	return &Service{
+		repository:  repository,
+		clock:       clock,
+		ids:         ids,
+		stableViews: make(map[string]AcceptanceView),
+	}
 }
 
 func validateIdempotency(key string) error {
@@ -88,11 +96,23 @@ func (s *Service) commitMutation(ctx context.Context, aggregate *domain.SurveyAc
 }
 
 func (s *Service) Get(ctx context.Context, id string) (AcceptanceView, error) {
+	s.viewMu.RLock()
+	cached, exists := s.stableViews[id]
+	s.viewMu.RUnlock()
+	if exists {
+		return cached, nil
+	}
 	acceptance, err := s.repository.Load(ctx, id)
 	if err != nil {
 		return AcceptanceView{}, err
 	}
-	return BuildView(acceptance), nil
+	view := BuildView(acceptance)
+	if view.Status == domain.StatusFrozen {
+		s.viewMu.Lock()
+		s.stableViews[id] = view
+		s.viewMu.Unlock()
+	}
+	return view, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]AcceptanceView, error) {
