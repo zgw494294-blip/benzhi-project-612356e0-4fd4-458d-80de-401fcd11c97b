@@ -15,10 +15,11 @@ func (s *Service) Evaluate(ctx context.Context, command EvaluateCommand) (Mutati
 	if ok, err := s.replay(ctx, op, command.IdempotencyKey, &replayed); err != nil || ok {
 		return replayed, err
 	}
-	acceptance, err := s.repository.Load(ctx, command.AcceptanceID)
+	acceptance, release, err := s.acquireEvaluationBase(ctx, command.AcceptanceID)
 	if err != nil {
 		return MutationResult{}, err
 	}
+	defer release()
 	if err := checkVersion(acceptance, command.ExpectedVersion); err != nil {
 		return MutationResult{}, err
 	}

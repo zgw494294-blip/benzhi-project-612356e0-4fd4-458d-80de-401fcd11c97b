@@ -5,18 +5,55 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"sonarqa/internal/domain"
 )
 
 type Service struct {
-	repository Repository
-	clock      Clock
-	ids        IDGenerator
+	repository      Repository
+	clock           Clock
+	ids             IDGenerator
+	evaluationMu    sync.Mutex
+	evaluationBases map[string]*evaluationBase
+}
+
+type evaluationBase struct {
+	acceptance *domain.SurveyAcceptance
+	users      int
 }
 
 func NewService(repository Repository, clock Clock, ids IDGenerator) *Service {
-	return &Service{repository: repository, clock: clock, ids: ids}
+	return &Service{
+		repository:      repository,
+		clock:           clock,
+		ids:             ids,
+		evaluationBases: make(map[string]*evaluationBase),
+	}
+}
+
+func (s *Service) acquireEvaluationBase(ctx context.Context, acceptanceID string) (*domain.SurveyAcceptance, func(), error) {
+	s.evaluationMu.Lock()
+	defer s.evaluationMu.Unlock()
+	base := s.evaluationBases[acceptanceID]
+	if base == nil {
+		acceptance, err := s.repository.Load(ctx, acceptanceID)
+		if err != nil {
+			return nil, nil, err
+		}
+		base = &evaluationBase{acceptance: acceptance}
+		s.evaluationBases[acceptanceID] = base
+	}
+	base.users++
+	release := func() {
+		s.evaluationMu.Lock()
+		defer s.evaluationMu.Unlock()
+		base.users--
+		if base.users == 0 {
+			delete(s.evaluationBases, acceptanceID)
+		}
+	}
+	return base.acceptance, release, nil
 }
 
 func validateIdempotency(key string) error {
